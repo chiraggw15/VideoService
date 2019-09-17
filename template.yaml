@@ -42,9 +42,9 @@ Resources:
       Description: !Sub
         - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
         - ResourceName: getVideo
-      CodeUri: src/Function5
-      Handler: index.handler
-      Runtime: nodejs10.x
+      CodeUri: src/getVideo
+      Handler: handler.handler
+      Runtime: python3.7
       MemorySize: 3008
       Timeout: 30
       Tracing: Active
@@ -67,6 +67,14 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub ${AWS::StackName}-videobuck-${AWS::AccountId}
+      NotificationConfiguration:
+        TopicConfigurations:
+          - Event: s3:ObjectCreated:*
+            Topic: !Ref videoUploaded
+          - Event: s3:ObjectRemoved:*
+            Topic: !Ref videoUploaded
+    DependsOn:
+      - VideoBucketTovideoUploadedPermission
   orchestrator:
     Type: AWS::Serverless::Function
     Properties:
@@ -74,7 +82,7 @@ Resources:
       Description: !Sub
         - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
         - ResourceName: orchestrator
-      CodeUri: src/Function
+      CodeUri: src/orchestrator
       Handler: handler.handler
       Runtime: python3.7
       MemorySize: 3008
@@ -89,13 +97,10 @@ Resources:
           FUNCTION_NAME: !Ref VideoProcessor
           FUNCTION_ARN: !GetAtt VideoProcessor.Arn
       Events:
-        VideoBucket:
-          Type: S3
+        videoUploaded:
+          Type: SNS
           Properties:
-            Bucket: !Ref VideoBucket
-            Events:
-              - s3:ObjectCreated:*
-              - s3:ObjectRemoved:*
+            Topic: !Ref videoUploaded
   VideoProcessor:
     Type: AWS::Serverless::Function
     Properties:
@@ -103,7 +108,7 @@ Resources:
       Description: !Sub
         - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
         - ResourceName: VideoProcessor
-      CodeUri: src/Function4
+      CodeUri: src/VideoProcessor
       Handler: handler.handler
       Runtime: python3.7
       MemorySize: 3008
@@ -149,7 +154,7 @@ Resources:
       Description: !Sub
         - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
         - ResourceName: getMetadata
-      CodeUri: src/Function3
+      CodeUri: src/getMetadata
       Handler: handler.handler
       Runtime: python3.7
       MemorySize: 3008
@@ -177,7 +182,7 @@ Resources:
       Description: !Sub
         - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
         - ResourceName: searchVideo
-      CodeUri: src/Function2
+      CodeUri: src/searchVideo
       Handler: handler.handler
       Runtime: python3.7
       MemorySize: 3008
@@ -192,6 +197,26 @@ Resources:
             Path: /search
             Method: GET
             RestApiId: !Ref Api
+  videoUploaded:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-videoUploaded
+  VideoBucketTovideoUploadedPermission:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref videoUploaded
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:s3:::${AWS::StackName}-videobuck-${AWS::AccountId}
+      Topics:
+        - !Ref videoUploaded
 Parameters:
   StackTagName:
     Type: String
