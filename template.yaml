@@ -1,3 +1,204 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Transform: 'AWS::Serverless-2016-10-31'
-Resources: {}
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Resources:
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub
+        - ${ResourceName} From Stack ${StackTagName} Environment ${EnvironmentTagName}
+        - ResourceName: Api
+      StageName: !Ref EnvironmentAPIGatewayStageName
+      DefinitionBody:
+        swagger: '2.0'
+        info: {}
+        paths:
+          /metadata:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${getMetadata.Arn}/invocations
+              responses: {}
+          /search:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${searchVideo.Arn}/invocations
+              responses: {}
+          /video:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${getVideo.Arn}/invocations
+              responses: {}
+      EndpointConfiguration: REGIONAL
+      TracingEnabled: true
+  getVideo:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-getVideo
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
+        - ResourceName: getVideo
+      CodeUri: src/Function5
+      Handler: index.handler
+      Runtime: nodejs10.x
+      MemorySize: 3008
+      Timeout: 30
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+        - S3CrudPolicy:
+            BucketName: !Ref MultimediaStore
+      Events:
+        ApiGETvideo:
+          Type: Api
+          Properties:
+            Path: /video
+            Method: GET
+            RestApiId: !Ref Api
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref MultimediaStore
+          BUCKET_ARN: !GetAtt MultimediaStore.Arn
+  VideoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-videobuck-${AWS::AccountId}
+  orchestrator:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-orchestrator
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
+        - ResourceName: orchestrator
+      CodeUri: src/Function
+      Handler: handler.handler
+      Runtime: python3.7
+      MemorySize: 3008
+      Timeout: 30
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+        - LambdaInvokePolicy:
+            FunctionName: !Ref VideoProcessor
+      Environment:
+        Variables:
+          FUNCTION_NAME: !Ref VideoProcessor
+          FUNCTION_ARN: !GetAtt VideoProcessor.Arn
+      Events:
+        VideoBucket:
+          Type: S3
+          Properties:
+            Bucket: !Ref VideoBucket
+            Events:
+              - s3:ObjectCreated:*
+              - s3:ObjectRemoved:*
+  VideoProcessor:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-VideoProcessor
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
+        - ResourceName: VideoProcessor
+      CodeUri: src/Function4
+      Handler: handler.handler
+      Runtime: python3.7
+      MemorySize: 3008
+      Timeout: 30
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+        - LambdaInvokePolicy:
+            FunctionName: !Ref searchVideo
+        - S3CrudPolicy:
+            BucketName: !Ref MultimediaStore
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MetadataStore
+      Environment:
+        Variables:
+          FUNCTION_NAME: !Ref searchVideo
+          FUNCTION_ARN: !GetAtt searchVideo.Arn
+          BUCKET_NAME: !Ref MultimediaStore
+          BUCKET_ARN: !GetAtt MultimediaStore.Arn
+          TABLE_NAME: !Ref MetadataStore
+          TABLE_ARN: !GetAtt MetadataStore.Arn
+  MultimediaStore:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-videobuck-${AWS::AccountId}
+  MetadataStore:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      TableName: !Sub ${AWS::StackName}-MetadataStore
+  getMetadata:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-getMetadata
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
+        - ResourceName: getMetadata
+      CodeUri: src/Function3
+      Handler: handler.handler
+      Runtime: python3.7
+      MemorySize: 3008
+      Timeout: 30
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+      Events:
+        ApiGETmetadata:
+          Type: Api
+          Properties:
+            Path: /metadata
+            Method: GET
+            RestApiId: !Ref Api
+        MetadataStore:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt MetadataStore.StreamArn
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 1
+  searchVideo:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-searchVideo
+      Description: !Sub
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
+        - ResourceName: searchVideo
+      CodeUri: src/Function2
+      Handler: handler.handler
+      Runtime: python3.7
+      MemorySize: 3008
+      Timeout: 30
+      Tracing: Active
+      Policies:
+        - AWSXrayWriteOnlyAccess
+      Events:
+        ApiGETsearch:
+          Type: Api
+          Properties:
+            Path: /search
+            Method: GET
+            RestApiId: !Ref Api
+Parameters:
+  StackTagName:
+    Type: String
+    Description: Stack Name (injected by Stackery at deployment time)
+  EnvironmentTagName:
+    Type: String
+    Description: Environment Name (injected by Stackery at deployment time)
+  EnvironmentAPIGatewayStageName:
+    Type: String
+    Description: Environment name used for API Gateway Stage names (injected by Stackery at deployment time)
